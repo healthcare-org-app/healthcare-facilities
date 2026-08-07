@@ -1,0 +1,9 @@
+name: facilities-service
+port: 9200
+lang: python
+description: "facilities-service \u2014 domain: identity"
+http_deps:
+- audit-log-service
+publishes:
+- audit.event
+subscribes: []
