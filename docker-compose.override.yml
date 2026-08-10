@@ -1,7 +1,7 @@
 services:
   facilities-service:
     build: .
-    container_name: ${NAME_UNDERSCORE}
+    container_name: facilities_service
     depends_on:
       postgres:
         condition: service_healthy
