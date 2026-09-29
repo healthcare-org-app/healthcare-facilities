@@ -39,6 +39,30 @@ def build_blueprint(svc) -> Blueprint:
             **(row["data"] or {}),
         }
 
+    def _validate_address(payload: dict) -> None:
+        """Best-effort: geocode `address` via demographics-service if present.
+
+        Never blocks the create/update — a slow or down demographics-service
+        must not fail a facility write.
+        """
+        if not payload.get("address"):
+            return
+        demo = clients.get("demographics-service")
+        if not demo:
+            return
+        try:
+            result = json_or_raise(demo.post("/api/demographics/validate-address", json={
+                "address": payload.get("address"),
+                "city": payload.get("city"),
+                "state": payload.get("state"),
+                "zip": payload.get("zip"),
+            }))
+            payload["address_validated"] = result["valid"]
+            payload["latitude"] = result.get("latitude")
+            payload["longitude"] = result.get("longitude")
+        except ServiceUnavailable:
+            pass
+
     @bp.get("/")
     @require_auth(scopes=[f"{RESOURCE}.read"])
     def list_records():
@@ -70,6 +94,7 @@ def build_blueprint(svc) -> Blueprint:
     def create_record():
         payload = request.get_json(silent=True) or {}
         payload.pop("id", None)
+        _validate_address(payload)
 
         row = db.query_one(
             f"INSERT INTO {TABLE} (data) VALUES (%s) RETURNING *",
@@ -101,6 +126,7 @@ def build_blueprint(svc) -> Blueprint:
             return jsonify({"error": f"{RESOURCE} {record_id} not found"}), 404
         payload = request.get_json(silent=True) or {}
         payload.pop("id", None)
+        _validate_address(payload)
         new_status = payload.pop("status", existing["status"])
         merged = {**(existing["data"] or {}), **payload}
         row = db.query_one(

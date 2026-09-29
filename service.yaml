@@ -4,6 +4,7 @@ lang: python
 description: "facilities-service \u2014 domain: identity"
 http_deps:
 - audit-log-service
+- demographics-service
 publishes:
 - audit.event
 subscribes: []

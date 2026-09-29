@@ -30,3 +30,53 @@ def test_audit_emitted_on_create(client, svc):
     client.post(f"/api/{RESOURCE}/", json={"name": "audit-me"})
     topics = [t for t, _, _ in svc.bus.published]
     assert "audit.event" in topics
+
+
+class _FakeResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+        self.text = str(body)
+
+    def json(self):
+        return self._body
+
+
+class _FakeDemographicsClient:
+    def __init__(self, response):
+        self._response = response
+        self.calls = []
+
+    def post(self, path, json=None):
+        self.calls.append((path, json))
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+
+def test_create_with_address_gets_geocoded(client, svc):
+    svc.clients["demographics-service"] = _FakeDemographicsClient(
+        _FakeResponse(200, {"valid": True, "matched_address": "1 Main St, Springfield, IL, 62701",
+                             "latitude": 39.8, "longitude": -89.6})
+    )
+    r = client.post(f"/api/{RESOURCE}/", json={"name": "test", "address": "1 Main St"})
+    assert r.status_code == 201, r.data
+    body = r.get_json()
+    assert body["address_validated"] is True
+    assert body["latitude"] == 39.8
+
+
+def test_create_without_address_skips_geocoding(client, svc):
+    demo = _FakeDemographicsClient(_FakeResponse(200, {"valid": True}))
+    svc.clients["demographics-service"] = demo
+    r = client.post(f"/api/{RESOURCE}/", json={"name": "test"})
+    assert r.status_code == 201
+    assert demo.calls == []
+
+
+def test_create_demographics_service_down_is_best_effort(client, svc):
+    from healthcare_common.http import ServiceUnavailable
+    svc.clients["demographics-service"] = _FakeDemographicsClient(ServiceUnavailable("down"))
+    r = client.post(f"/api/{RESOURCE}/", json={"name": "test", "address": "1 Main St"})
+    assert r.status_code == 201
+    assert "address_validated" not in r.get_json()
