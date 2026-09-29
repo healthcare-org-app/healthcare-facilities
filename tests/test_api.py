@@ -71,7 +71,9 @@ def test_create_without_address_skips_geocoding(client, svc):
     svc.clients["demographics-service"] = demo
     r = client.post(f"/api/{RESOURCE}/", json={"name": "test"})
     assert r.status_code == 201
-    assert demo.calls == []
+    # No address given, so no geocoding call — filter-text (for `name`) is
+    # unrelated and still happens.
+    assert all(path != "/api/demographics/validate-address" for path, _ in demo.calls)
 
 
 def test_create_demographics_service_down_is_best_effort(client, svc):
@@ -80,3 +82,20 @@ def test_create_demographics_service_down_is_best_effort(client, svc):
     r = client.post(f"/api/{RESOURCE}/", json={"name": "test", "address": "1 Main St"})
     assert r.status_code == 201
     assert "address_validated" not in r.get_json()
+
+
+def test_create_filters_name(client, svc):
+    demo = _FakeDemographicsClient(_FakeResponse(200, {"filtered": "****"}))
+    svc.clients["demographics-service"] = demo
+    r = client.post(f"/api/{RESOURCE}/", json={"name": "damn"})
+    assert r.status_code == 201
+    assert r.get_json()["name"] == "****"
+    assert ("/api/demographics/filter-text", {"text": "damn"}) in demo.calls
+
+
+def test_create_filter_text_down_is_best_effort(client, svc):
+    from healthcare_common.http import ServiceUnavailable
+    svc.clients["demographics-service"] = _FakeDemographicsClient(ServiceUnavailable("down"))
+    r = client.post(f"/api/{RESOURCE}/", json={"name": "test"})
+    assert r.status_code == 201
+    assert r.get_json()["name"] == "test"

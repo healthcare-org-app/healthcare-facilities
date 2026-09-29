@@ -63,6 +63,25 @@ def build_blueprint(svc) -> Blueprint:
         except ServiceUnavailable:
             pass
 
+    def _filter_text(payload: dict) -> None:
+        """Best-effort: filter profanity out of `name` via demographics-service
+        if present.
+
+        Never blocks the create/update — a slow or down demographics-service
+        must not fail a facility write.
+        """
+        value = payload.get("name")
+        if not value:
+            return
+        demo = clients.get("demographics-service")
+        if not demo:
+            return
+        try:
+            result = json_or_raise(demo.post("/api/demographics/filter-text", json={"text": value}))
+            payload["name"] = result.get("filtered", value)
+        except ServiceUnavailable:
+            pass
+
     @bp.get("/")
     @require_auth(scopes=[f"{RESOURCE}.read"])
     def list_records():
@@ -95,6 +114,7 @@ def build_blueprint(svc) -> Blueprint:
         payload = request.get_json(silent=True) or {}
         payload.pop("id", None)
         _validate_address(payload)
+        _filter_text(payload)
 
         row = db.query_one(
             f"INSERT INTO {TABLE} (data) VALUES (%s) RETURNING *",
@@ -127,6 +147,7 @@ def build_blueprint(svc) -> Blueprint:
         payload = request.get_json(silent=True) or {}
         payload.pop("id", None)
         _validate_address(payload)
+        _filter_text(payload)
         new_status = payload.pop("status", existing["status"])
         merged = {**(existing["data"] or {}), **payload}
         row = db.query_one(
